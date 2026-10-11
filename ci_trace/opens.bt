@@ -1,0 +1,7 @@
+// Record files opened by python processes: "<nsecs> <pid> <path>", skipping system paths.
+// nsecs is CLOCK_MONOTONIC, matching time.monotonic_ns() in ci_trace/pytest_trace_plugin.py.
+tracepoint:syscalls:sys_enter_openat
+/strncmp(comm, "python", 6) == 0 && strncmp(str(args.filename), "/usr/", 5) != 0 && strncmp(str(args.filename), "/proc/", 6) != 0 && strncmp(str(args.filename), "/sys/", 5) != 0 && strncmp(str(args.filename), "/dev/", 5) != 0 && strncmp(str(args.filename), "/tmp/", 5) != 0 && strncmp(str(args.filename), "/etc/", 5) != 0/
+{
+  printf("%llu %d %s\n", nsecs, pid, str(args.filename));
+}

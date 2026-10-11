@@ -1,0 +1,7 @@
+# Trace-only coverage config: measure every first-party file (no omit: envs and migrations count too);
+# per-test contexts come from pytest-cov --cov-context=test.
+[run]
+source = cms, common, lms, openedx, xmodule
+relative_files = true
+branch = false
+data_file = .coverage

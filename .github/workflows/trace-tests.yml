@@ -1,0 +1,132 @@
+name: Trace tests (CI test-selection experiment)
+
+# Experiment for github.com/Aamir-raza-1/ci-casestudies (not part of openedx-platform).
+# Runs the repo's own unit-test shards (unit-tests.yml: same shard names, paths and Django settings from
+# .github/workflows/unit-test-shards.json) once per shard, traced:
+#   per-test coverage contexts (pytest-cov --cov-context=test, COVERAGE_CORE=ctrace)
+#   + eBPF file opens (bpftrace) -> every repo file each test executed or opened
+# junit gives seconds per test file (traced; untraced seconds come from upstream master's report-log).
+# The analyze job builds the file -> tests map and the static import map (Python 3.12) and uploads
+# only the small results ("analysis").
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: JSON list of shard names (default = all 10 upstream shards)
+        default: '["lms-1","lms-2","lms-3","lms-4","lms-5","shared-with-lms-1","shared-with-lms-2","shared-with-cms-1","cms-1","cms-2"]'
+      pilot_paths:
+        description: If set, run only these test paths (one shard, lms settings) instead of the shards
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  COLUMNS: 150
+  RUNNER_ROOT: /home/runner/work/openedx-platform/openedx-platform/
+
+jobs:
+  trace:
+    name: Trace ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(inputs.pilot_paths != '' && '["pilot"]' || inputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System requirements (as upstream) + bpftrace
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libmysqlclient-dev libxmlsec1-dev lynx bpftrace
+      - name: Start MongoDB
+        uses: supercharge/mongodb-github-action@1.12.1
+        with:
+          mongodb-version: "7.0"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Install (same as upstream) + pytest-cov
+        run: |
+          make test-requirements
+          uv pip install pytest-cov
+      - name: Shard paths and settings
+        env:
+          SHARD: ${{ matrix.shard }}
+          PILOT: ${{ inputs.pilot_paths }}
+        run: |
+          if [[ "$SHARD" == "pilot" ]]; then
+            echo "settings_path=lms.envs.test" >> $GITHUB_ENV
+            echo "unit_test_paths=$PILOT" >> $GITHUB_ENV
+          else
+            echo "settings_path=$(uv run python scripts/unit_test_shards_parser.py --shard-name=$SHARD --output settings)" >> $GITHUB_ENV
+            echo "unit_test_paths=$(uv run python scripts/unit_test_shards_parser.py --shard-name=$SHARD)" >> $GITHUB_ENV
+          fi
+      - name: Traced run
+        env:
+          PYTHONDONTWRITEBYTECODE: 1
+          TRACE_DIR: ${{ github.workspace }}/trace
+          COVERAGE_CORE: ctrace
+        run: |
+          mkdir -p trace
+          sudo BPFTRACE_MAX_STRLEN=200 bpftrace ci_trace/opens.bt > "$TRACE_DIR/opens.log" 2> bpftrace.err &
+          for i in $(seq 1 60); do grep -q "Attaching" bpftrace.err 2>/dev/null && break; sleep 1; done
+          cat bpftrace.err
+          start=$(date +%s)
+          uv run --no-sync python -Wd -m pytest -p no:randomly -p no:cacheprovider -p ci_trace.pytest_trace_plugin \
+            --ds=${{ env.settings_path }} ${{ env.unit_test_paths }} \
+            --cov --cov-config=ci_trace/coveragerc --cov-context=test --cov-report= \
+            --junitxml=trace/junit.xml -o junit_family=legacy > trace/traced.txt 2>&1 || true
+          echo "traced_seconds=$(( $(date +%s) - start ))" | tee -a trace/timing.txt
+          sudo pkill -INT bpftrace || true
+          sleep 3
+          tail -5 trace/traced.txt
+          ls -la .coverage* || true
+          uv run --no-sync coverage combine --rcfile=ci_trace/coveragerc 2>/dev/null || true
+          mv .coverage trace/coverage.sqlite
+          echo "${{ matrix.shard }} ${{ env.settings_path }}" > trace/shard.txt
+          git rev-parse HEAD > trace/commit.txt
+          gzip -9 trace/opens.log trace/traced.txt
+          ls -la trace | head -20
+          df -h . | tail -1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trace-group-${{ matrix.shard }}
+          path: trace/
+          retention-days: 30
+
+  analyze:
+    needs: trace
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: trace-group-*
+          path: artifacts
+      - name: Analyze (map, seconds, executed lines) + static import map with the repo's Python
+        run: |
+          pip install -q coverage
+          du -sh artifacts/*
+          df -h . | tail -1
+          python ci_trace/analyze.py artifacts --root "$RUNNER_ROOT" --repo . --out out > out.log
+          tail -5 out.log
+          python ci_trace/static_map.py . --source cms --source common --source lms --source openedx --source xmodule \
+            --test cms --test common --test lms --test openedx --test xmodule \
+            --test-pattern '(^|/)(test_[^/]*|tests|tests_[^/]*|[^/]*_tests)\.py$' --out out/static.json | tee out/static_report.txt
+          gzip -9 out/static.json
+          git rev-parse HEAD > out/commit.txt
+          echo "${{ github.run_id }}" > out/source_run_id.txt
+          python -c "import json; r=json.load(open('out/report.json')); print(json.dumps({k: r.get(k) for k in ['tests','test_files','outcomes','timing','tests_without_any_dependency','deps_per_test_median','seconds_total']}, indent=1, default=list))"
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analysis
+          path: out/
+          retention-days: 30
