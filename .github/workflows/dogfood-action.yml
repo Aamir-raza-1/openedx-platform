@@ -50,7 +50,7 @@ jobs:
           . venv/bin/activate
           uv pip install -q -r requirements_test.txt -c homeassistant/package_constraints.txt
           uv pip install -q -e . aiohue==4.9.0 -c homeassistant/package_constraints.txt
-          python3 -m script.translations develop --components hue > /dev/null
+          python3 -m script.translations develop --integration hue > /dev/null
 
       - name: Run ci-proof Action on real HA leaf commit diff (HEAD~1...HEAD)
         id: leaf_action
@@ -197,6 +197,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Checkout action repository
+        uses: actions/checkout@v4
+
       - name: Set up uv and Python 3.14
         uses: astral-sh/setup-uv@v6
         with:
@@ -217,7 +220,7 @@ jobs:
           . venv/bin/activate
           uv pip install -q -r requirements_test.txt -c homeassistant/package_constraints.txt
           uv pip install -q -e . aiohue==4.9.0 -c homeassistant/package_constraints.txt
-          python3 -m script.translations develop --components hue > /dev/null
+          python3 -m script.translations develop --integration hue > /dev/null
 
           # 1. Clean run of all test files in tests/components/hue + tests/test_loader.py (18 files)
           T_CLEAN0=$(python3 -c 'import time; print("%.6f" % time.time())')
