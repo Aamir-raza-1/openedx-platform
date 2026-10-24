@@ -79,14 +79,14 @@ jobs:
           changed_files: pyproject.toml
           decisions_out: /tmp/dogfood-out/decisions-full.json
 
-      - name: Run ci-proof Action on ignored change (README.rst)
+      - name: Run ci-proof Action on ignored change (CODEOWNERS)
         id: ignore_action
         uses: ./.github/actions/ci-proof
         with:
           working_directory: /tmp/ha-core
           profile: .github/actions/ci-proof/profiles/home-assistant__core.yaml
           index: /tmp/ha-dogfood-idx/ha.idx
-          changed_files: README.rst
+          changed_files: CODEOWNERS
           command: /tmp/ha-core/venv/bin/pytest -qq -o filterwarnings=ignore -p no:sugar -p no:cacheprovider --timeout=30
           decisions_out: /tmp/dogfood-out/decisions-ignore.json
 
