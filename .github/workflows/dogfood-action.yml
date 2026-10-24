@@ -55,7 +55,7 @@ jobs:
             colorlog==6.10.1 dbus-fast==5.0.22 habluetooth==7.1.2 \
             paho-mqtt==2.1.0 pyotp==2.10.0 PyQRCode==1.2.1 serialx==1.11.0 \
             -c homeassistant/package_constraints.txt
-          uv pip install -q -e . --no-build-isolation --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
+          uv pip install -q -e . --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
           python3 -m script.translations develop --integration hue > /dev/null
 
       - name: Run ci-proof Action on real HA leaf commit diff (HEAD~1...HEAD)
@@ -231,7 +231,7 @@ jobs:
             colorlog==6.10.1 dbus-fast==5.0.22 habluetooth==7.1.2 \
             paho-mqtt==2.1.0 pyotp==2.10.0 PyQRCode==1.2.1 serialx==1.11.0 \
             -c homeassistant/package_constraints.txt
-          uv pip install -q -e . --no-build-isolation --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
+          uv pip install -q -e . --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
           python3 -m script.translations develop --integration hue > /dev/null
 
           # 1. Clean run of all test files in tests/components/hue + tests/test_loader.py (18 files)
