@@ -305,10 +305,16 @@ runs:
             d = json.load(f)
         selected = d.get("selected", [])
         full = bool(d.get("full", False))
-        # Keep space-separated output within GitHub Actions 1 MB output cap
+        # Keep space-separated output within Linux MAX_ARG_STRLEN (128 KB) so downstream env: bindings never fail with E2BIG
         selected_str = " ".join(selected)
-        if len(selected_str) > 900_000:
-            selected_str = " ".join(selected[:5000])
+        if len(selected_str) > 100_000:
+            acc, total = [], 0
+            for item in selected:
+                if total + len(item) + 1 > 100_000:
+                    break
+                acc.append(item)
+                total += len(item) + 1
+            selected_str = " ".join(acc)
         with open(out_path, "a") as out:
             out.write("selected=%s\n" % selected_str)
             out.write("selected_count=%d\n" % len(selected))
@@ -331,7 +337,6 @@ runs:
       env:
         INPUT_COMMAND: ${{ inputs.command }}
         INPUT_FULL_COMMAND: ${{ inputs.full_command }}
-        SELECTED_TESTS: ${{ steps.select.outputs.selected }}
         SELECTED_COUNT: ${{ steps.select.outputs.selected_count }}
         FULL_RUN: ${{ steps.select.outputs.full }}
         DECISIONS_PATH: ${{ steps.select.outputs.decisions_path }}
@@ -347,14 +352,16 @@ runs:
             if [ -n "${INPUT_FULL_COMMAND:-}" ]; then
               echo "Full suite required (full=true); running full_command: $INPUT_FULL_COMMAND"
               eval "$INPUT_FULL_COMMAND"
-            elif [ "${SELECTED_COUNT:-0}" -le 200 ] && [ -n "${SELECTED_TESTS:-}" ]; then
+            elif [ "${SELECTED_COUNT:-0}" -le 200 ] && [ -f "${DECISIONS_PATH:-}" ]; then
+              SELECTED_TESTS=$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1])).get("selected",[])))' "$DECISIONS_PATH")
               echo "Full suite required (full=true, ${SELECTED_COUNT} files); running: $INPUT_COMMAND $SELECTED_TESTS"
               eval "$INPUT_COMMAND $SELECTED_TESTS"
             else
               echo "Full suite required (full=true, ${SELECTED_COUNT} files); running: $INPUT_COMMAND"
               eval "$INPUT_COMMAND"
             fi
-          elif [ "${SELECTED_COUNT:-0}" -gt 0 ] && [ -n "${SELECTED_TESTS:-}" ]; then
+          elif [ "${SELECTED_COUNT:-0}" -gt 0 ] && [ -f "${DECISIONS_PATH:-}" ]; then
+            SELECTED_TESTS=$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1])).get("selected",[])))' "$DECISIONS_PATH")
             echo "Running ${SELECTED_COUNT} affected test file(s): $INPUT_COMMAND $SELECTED_TESTS"
             eval "$INPUT_COMMAND $SELECTED_TESTS"
           else
