@@ -81,7 +81,7 @@ jobs:
           . venv/bin/activate
           uv pip install -q -r requirements.txt -r requirements_test.txt -c homeassistant/package_constraints.txt
           uv pip install -q -e . --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
-          python3 -m script.install_integration_requirements pvoutput recorder bluetooth mqtt http websocket_api device_tracker dhcp diagnostics repairs sensor webhook network zeroconf ssdp usb onboarding auth person zone lovelace api config system_log persistent_notification
+          python3 -m script.install_integration_requirements pvoutput hassio recorder bluetooth mqtt http websocket_api device_tracker dhcp diagnostics repairs sensor webhook network zeroconf ssdp usb onboarding auth person zone lovelace api config system_log persistent_notification
           python3 -m script.translations develop --integration pvoutput > /dev/null
 
           # Scenario 1: leaf component (homeassistant/components/pvoutput/sensor.py -> 4 test files)
