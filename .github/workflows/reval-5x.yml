@@ -74,7 +74,7 @@ jobs:
           mkdir -p /tmp/ha out
           git -C /tmp/ha init -q
           git -C /tmp/ha remote add origin https://github.com/home-assistant/core.git
-          git -C /tmp/ha fetch -q --depth 1 origin c9a3fb332ffd3ff4fb8b3fd3fa0fbde2eb0eb0aa
+          git -C /tmp/ha fetch -q --depth 1 origin 075bdcaab6ca141f2b2cd049b8af46bbb2f881ad
           git -C /tmp/ha checkout -q FETCH_HEAD
           cd /tmp/ha
           uv venv venv
@@ -142,7 +142,7 @@ jobs:
           mkdir -p /tmp/pyd out
           git -C /tmp/pyd init -q
           git -C /tmp/pyd remote add origin https://github.com/pydantic/pydantic.git
-          git -C /tmp/pyd fetch -q --depth 1 origin c7a79aa88ab2ac23a3f0eb6ff7ff2ab1efca0487
+          git -C /tmp/pyd fetch -q --depth 1 origin 0edb9347fad19f29452037d8fc47331cd2c0a096
           git -C /tmp/pyd checkout -q FETCH_HEAD
           cd /tmp/pyd
           uv sync --all-packages --group testing-extra --all-extras
@@ -196,7 +196,7 @@ jobs:
           mkdir -p /tmp/lc out
           git -C /tmp/lc init -q
           git -C /tmp/lc remote add origin https://github.com/langchain-ai/langchain.git
-          git -C /tmp/lc fetch -q --depth 1 origin f9acbc1bb2ac2d6dc44702ab0da3bf6fa638f722
+          git -C /tmp/lc fetch -q --depth 1 origin b060a7466482ed5dac5fa1ef12e3ad21cccce385
           git -C /tmp/lc checkout -q FETCH_HEAD
           cd /tmp/lc/libs/model-profiles
           uv sync -q --group test --dev
@@ -249,9 +249,10 @@ jobs:
           mkdir -p /tmp/k8s out
           git -C /tmp/k8s init -q
           git -C /tmp/k8s remote add origin https://github.com/kubernetes/kubernetes.git
-          git -C /tmp/k8s fetch -q --depth 1 origin c10f2d14e6dd9efd5fa2c2ade3f9f6cef7ffd2ca
+          git -C /tmp/k8s fetch -q --depth 1 origin fddd57cf8f90c222d9632ceea3616c2a851a42b4
           git -C /tmp/k8s checkout -q FETCH_HEAD
           cd /tmp/k8s
+          export GOTOOLCHAIN=auto
 
           t0=$(python3 -c 'import time; print(time.time())')
           go test -count=1 ./pkg/util/env > "$GITHUB_WORKSPACE/out/k8s_s1.txt" 2>&1
@@ -297,7 +298,7 @@ jobs:
           git -C /tmp/supa init -q
           git -C /tmp/supa remote add origin https://github.com/supabase/supabase.git
           git -C /tmp/supa sparse-checkout init --cone
-          git -C /tmp/supa sparse-checkout set apps/studio packages
+          git -C /tmp/supa sparse-checkout set apps/studio packages patches
           git -C /tmp/supa fetch -q --depth 1 origin 7e866ef83e89e35cdda45a6c98abd069d5fa1b2f
           git -C /tmp/supa checkout -q FETCH_HEAD
           cd /tmp/supa
