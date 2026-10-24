@@ -1,0 +1,63 @@
+name: Revalidate 5x scenarios (DV8)
+
+on:
+  push:
+    branches:
+      - reval/5x
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  revalidate:
+    name: Revalidate 5 scenarios (openedx-platform)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System requirements
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libmysqlclient-dev libxmlsec1-dev lynx
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Install test requirements
+        run: make test-requirements
+      - name: Run 5 scenarios (clean + planted bug)
+        env:
+          PYTHONDONTWRITEBYTECODE: 1
+        run: |
+          mkdir -p out
+          # Scenario 1 & 4: leaf component (common/djangoapps/status/models.py) & test-only (common/djangoapps/status/tests.py) -> 3 test files
+          t0=$(python3 -c 'import time; print(time.time())')
+          uv run --no-sync python -Wd -m pytest -p no:randomly -p no:cacheprovider \
+            --ds=lms.envs.test common/djangoapps/status/tests.py lms/tests.py \
+            --junitxml=out/s1_lms.xml -o junit_family=legacy > out/s1_lms.txt 2>&1
+          uv run --no-sync python -Wd -m pytest -p no:randomly -p no:cacheprovider \
+            --ds=cms.envs.test cms/tests.py \
+            --junitxml=out/s1_cms.xml -o junit_family=legacy > out/s1_cms.txt 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "OPENEDX_S1_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") lms=$(tail -1 out/s1_lms.txt) cms=$(tail -1 out/s1_cms.txt)"
+
+          # Scenario 5: planted bug in common/djangoapps/status/models.py line 50 (return msg -> return None)
+          python3 -c '
+          p = "common/djangoapps/status/models.py"
+          txt = open(p).read()
+          target = "        return msg\n"
+          assert target in txt
+          open(p, "w").write(txt.replace(target, "        return None\n", 1))
+          '
+          t0=$(python3 -c 'import time; print(time.time())')
+          set +e
+          uv run --no-sync python -Wd -m pytest -p no:randomly -p no:cacheprovider \
+            --ds=lms.envs.test common/djangoapps/status/tests.py lms/tests.py \
+            --junitxml=out/s5_lms.xml -o junit_family=legacy > out/s5_lms.txt 2>&1
+          rc_sel=$?
+          set -e
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "OPENEDX_S5 rc_sel=$rc_sel sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 out/s5_lms.txt)"
+          git checkout -- common/djangoapps/status/models.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reval-5x-openedx
+          path: out/
