@@ -56,7 +56,7 @@ jobs:
             paho-mqtt==2.1.0 pyotp==2.10.0 PyQRCode==1.2.1 serialx==1.11.0 \
             -c homeassistant/package_constraints.txt
           uv pip install -q -e . --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
-          python3 -m script.translations develop --integration hue > /dev/null
+          python3 -m script.translations develop --all > /dev/null
 
       - name: Run ci-proof Action on real HA leaf commit diff (HEAD~1...HEAD)
         id: leaf_action
@@ -232,7 +232,7 @@ jobs:
             paho-mqtt==2.1.0 pyotp==2.10.0 PyQRCode==1.2.1 serialx==1.11.0 \
             -c homeassistant/package_constraints.txt
           uv pip install -q -e . --config-settings editable_mode=compat -c homeassistant/package_constraints.txt
-          python3 -m script.translations develop --integration hue > /dev/null
+          python3 -m script.translations develop --all > /dev/null
 
           # 1. Clean run of all test files in tests/components/hue + tests/test_loader.py (18 files)
           T_CLEAN0=$(python3 -c 'import time; print("%.6f" % time.time())')
