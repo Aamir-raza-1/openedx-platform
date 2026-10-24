@@ -81,7 +81,7 @@ jobs:
           . venv/bin/activate
           uv pip install -q -r requirements_test.txt -c homeassistant/package_constraints.txt
           uv pip install -q -e . pvo==4.0.0 -c homeassistant/package_constraints.txt
-          python3 -m script.translations develop --components pvoutput > /dev/null
+          python3 -m script.translations develop --integration pvoutput > /dev/null
 
           # Scenario 1: leaf component (homeassistant/components/pvoutput/sensor.py -> 4 test files)
           t0=$(python3 -c 'import time; print(time.time())')
@@ -150,14 +150,14 @@ jobs:
           # Scenario 1: leaf component (pydantic/experimental/pipeline.py -> 3 test files)
           t0=$(python3 -c 'import time; print(time.time())')
           uv run --no-sync python -m pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/pyd_s1.xml" -o junit_family=legacy \
-            tests/test_Docs.py tests/test_main.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s1.txt" 2>&1
+            tests/test_docs.py tests/test_main.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s1.txt" 2>&1
           t1=$(python3 -c 'import time; print(time.time())')
           echo "PYD_S1 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/pyd_s1.txt")"
 
           # Scenario 4: test-only (tests/test_pipeline.py -> 2 test files)
           t0=$(python3 -c 'import time; print(time.time())')
           uv run --no-sync python -m pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/pyd_s4.xml" -o junit_family=legacy \
-            tests/test_Docs.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s4.txt" 2>&1
+            tests/test_docs.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s4.txt" 2>&1
           t1=$(python3 -c 'import time; print(time.time())')
           echo "PYD_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/pyd_s4.txt")"
 
@@ -171,7 +171,7 @@ jobs:
           t0=$(python3 -c 'import time; print(time.time())')
           set +e
           uv run --no-sync python -m pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/pyd_s5_selected.xml" -o junit_family=legacy \
-            tests/test_Docs.py tests/test_main.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s5_selected.txt" 2>&1
+            tests/test_docs.py tests/test_main.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s5_selected.txt" 2>&1
           rc_sel=$?
           set -e
           t1=$(python3 -c 'import time; print(time.time())')
