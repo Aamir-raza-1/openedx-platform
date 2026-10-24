@@ -1,4 +1,4 @@
-name: Revalidate 5x scenarios (DV8)
+name: Revalidate 5x scenarios across all 6 repos (DV8)
 
 on:
   push:
@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  revalidate:
-    name: Revalidate 5 scenarios (openedx-platform)
+  openedx:
+    name: Revalidate 5 scenarios (openedx/openedx-platform)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,6 @@ jobs:
           PYTHONDONTWRITEBYTECODE: 1
         run: |
           mkdir -p out
-          # Scenario 1 & 4: leaf component (common/djangoapps/status/models.py) & test-only (common/djangoapps/status/tests.py) -> 3 test files
           t0=$(python3 -c 'import time; print(time.time())')
           uv run --no-sync python -Wd -m pytest -p no:randomly -p no:cacheprovider \
             --ds=lms.envs.test common/djangoapps/status/tests.py lms/tests.py \
@@ -39,7 +38,6 @@ jobs:
           t1=$(python3 -c 'import time; print(time.time())')
           echo "OPENEDX_S1_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") lms=$(tail -1 out/s1_lms.txt) cms=$(tail -1 out/s1_cms.txt)"
 
-          # Scenario 5: planted bug in common/djangoapps/status/models.py line 50 (return msg -> return None)
           python3 -c '
           p = "common/djangoapps/status/models.py"
           txt = open(p).read()
@@ -60,4 +58,281 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: reval-5x-openedx
+          path: out/
+
+  ha-core:
+    name: Revalidate 5 scenarios (home-assistant/core)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: false
+      - name: Shallow fetch home-assistant/core at map commit and run 5 scenarios
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libturbojpeg0-dev libpcap-dev
+          mkdir -p /tmp/ha out
+          git -C /tmp/ha init -q
+          git -C /tmp/ha remote add origin https://github.com/home-assistant/core.git
+          git -C /tmp/ha fetch -q --depth 1 origin c9a3fb332ffd3ff4fb8b3fd3fa0fbde2eb0eb0aa
+          git -C /tmp/ha checkout -q FETCH_HEAD
+          cd /tmp/ha
+          uv venv venv
+          . venv/bin/activate
+          uv pip install -q -r requirements_test.txt -c homeassistant/package_constraints.txt
+          uv pip install -q -e . pvo==4.0.0 -c homeassistant/package_constraints.txt
+          python3 -m script.translations develop --components pvoutput > /dev/null
+
+          # Scenario 1: leaf component (homeassistant/components/pvoutput/sensor.py -> 4 test files)
+          t0=$(python3 -c 'import time; print(time.time())')
+          python3 -m pytest -qq --timeout=30 -p no:sugar -p no:cacheprovider \
+            --junitxml="$GITHUB_WORKSPACE/out/ha_s1.xml" -o junit_family=legacy \
+            tests/components/pvoutput/test_config_flow.py \
+            tests/components/pvoutput/test_diagnostics.py \
+            tests/components/pvoutput/test_init.py \
+            tests/components/pvoutput/test_sensor.py > "$GITHUB_WORKSPACE/out/ha_s1.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "HA_S1 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/ha_s1.txt")"
+
+          # Scenario 4: test-only (tests/components/pvoutput/test_sensor.py -> 1 test file)
+          t0=$(python3 -c 'import time; print(time.time())')
+          python3 -m pytest -qq --timeout=30 -p no:sugar -p no:cacheprovider \
+            --junitxml="$GITHUB_WORKSPACE/out/ha_s4.xml" -o junit_family=legacy \
+            tests/components/pvoutput/test_sensor.py > "$GITHUB_WORKSPACE/out/ha_s4.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "HA_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/ha_s4.txt")"
+
+          # Scenario 5: planted bug in homeassistant/components/pvoutput/sensor.py line 126 (negate-if)
+          python3 -c '
+          p = "homeassistant/components/pvoutput/sensor.py"
+          txt = open(p).read()
+          target = "if description.value_fn(coordinator.data) is not None:"
+          assert target in txt
+          open(p, "w").write(txt.replace(target, "if not (description.value_fn(coordinator.data) is not None):", 1))
+          '
+          t0=$(python3 -c 'import time; print(time.time())')
+          set +e
+          python3 -m pytest -qq --timeout=30 -p no:sugar -p no:cacheprovider \
+            --junitxml="$GITHUB_WORKSPACE/out/ha_s5_selected.xml" -o junit_family=legacy \
+            tests/components/pvoutput/test_config_flow.py \
+            tests/components/pvoutput/test_diagnostics.py \
+            tests/components/pvoutput/test_init.py \
+            tests/components/pvoutput/test_sensor.py > "$GITHUB_WORKSPACE/out/ha_s5_selected.txt" 2>&1
+          rc_sel=$?
+          set -e
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "HA_S5 rc_sel=$rc_sel sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/ha_s5_selected.txt")"
+          git checkout -- homeassistant/components/pvoutput/sensor.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reval-5x-ha
+          path: out/
+
+  pydantic:
+    name: Revalidate 5 scenarios (pydantic/pydantic)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: false
+      - name: Shallow fetch pydantic/pydantic at map commit and run 5 scenarios
+        run: |
+          mkdir -p /tmp/pyd out
+          git -C /tmp/pyd init -q
+          git -C /tmp/pyd remote add origin https://github.com/pydantic/pydantic.git
+          git -C /tmp/pyd fetch -q --depth 1 origin c7a79aa88ab2ac23a3f0eb6ff7ff2ab1efca0487
+          git -C /tmp/pyd checkout -q FETCH_HEAD
+          cd /tmp/pyd
+          uv sync --all-packages --group testing-extra --all-extras
+
+          # Scenario 1: leaf component (pydantic/experimental/pipeline.py -> 3 test files)
+          t0=$(python3 -c 'import time; print(time.time())')
+          uv run --no-sync python -m pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/pyd_s1.xml" -o junit_family=legacy \
+            tests/test_Docs.py tests/test_main.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s1.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "PYD_S1 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/pyd_s1.txt")"
+
+          # Scenario 4: test-only (tests/test_pipeline.py -> 2 test files)
+          t0=$(python3 -c 'import time; print(time.time())')
+          uv run --no-sync python -m pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/pyd_s4.xml" -o junit_family=legacy \
+            tests/test_Docs.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s4.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "PYD_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/pyd_s4.txt")"
+
+          # Scenario 5: planted bug in pydantic/experimental/pipeline.py line 362 (return None)
+          python3 -c '
+          p = "pydantic/experimental/pipeline.py"
+          txt = open(p).read()
+          assert "return self.predicate(lambda v: v.endswith(suffix))" in txt
+          open(p, "w").write(txt.replace("return self.predicate(lambda v: v.endswith(suffix))", "return None", 1))
+          '
+          t0=$(python3 -c 'import time; print(time.time())')
+          set +e
+          uv run --no-sync python -m pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/pyd_s5_selected.xml" -o junit_family=legacy \
+            tests/test_Docs.py tests/test_main.py tests/test_pipeline.py > "$GITHUB_WORKSPACE/out/pyd_s5_selected.txt" 2>&1
+          rc_sel=$?
+          set -e
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "PYD_S5 rc_sel=$rc_sel sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/pyd_s5_selected.txt")"
+          git checkout -- pydantic/experimental/pipeline.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reval-5x-pydantic
+          path: out/
+
+  langchain:
+    name: Revalidate 5 scenarios (langchain-ai/langchain)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.21"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Shallow fetch langchain-ai/langchain at map commit and run 5 scenarios
+        run: |
+          mkdir -p /tmp/lc out
+          git -C /tmp/lc init -q
+          git -C /tmp/lc remote add origin https://github.com/langchain-ai/langchain.git
+          git -C /tmp/lc fetch -q --depth 1 origin f9acbc1bb2ac2d6dc44702ab0da3bf6fa638f722
+          git -C /tmp/lc checkout -q FETCH_HEAD
+          cd /tmp/lc/libs/model-profiles
+          uv sync -q --group test --dev
+
+          # Scenario 1: leaf component (libs/model-profiles/langchain_model_profiles/cli.py -> 2 test files)
+          t0=$(python3 -c 'import time; print(time.time())')
+          uv run --no-sync pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/lc_s1.xml" -o junit_family=legacy \
+            tests/unit_tests/test_cli.py tests/unit_tests/test_summary.py > "$GITHUB_WORKSPACE/out/lc_s1.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "LC_S1 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/lc_s1.txt")"
+
+          # Scenario 4: test-only (libs/model-profiles/tests/unit_tests/test_cli.py -> 1 test file)
+          t0=$(python3 -c 'import time; print(time.time())')
+          uv run --no-sync pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/lc_s4.xml" -o junit_family=legacy \
+            tests/unit_tests/test_cli.py > "$GITHUB_WORKSPACE/out/lc_s4.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "LC_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/lc_s4.txt")"
+
+          # Scenario 5: planted bug in libs/model-profiles/langchain_model_profiles/cli.py line 199 (negate-if)
+          python3 -c '
+          p = "langchain_model_profiles/cli.py"
+          txt = open(p).read()
+          target = "if output_file.exists() and output_file.is_symlink():"
+          assert target in txt
+          open(p, "w").write(txt.replace(target, "if not (output_file.exists() and output_file.is_symlink()):", 1))
+          '
+          t0=$(python3 -c 'import time; print(time.time())')
+          set +e
+          uv run --no-sync pytest -p no:cacheprovider -q --junitxml="$GITHUB_WORKSPACE/out/lc_s5_selected.xml" -o junit_family=legacy \
+            tests/unit_tests/test_cli.py tests/unit_tests/test_summary.py > "$GITHUB_WORKSPACE/out/lc_s5_selected.txt" 2>&1
+          rc_sel=$?
+          set -e
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "LC_S5 rc_sel=$rc_sel sec=$(python3 -c "print(round($t1-$t0, 2))") $(tail -1 "$GITHUB_WORKSPACE/out/lc_s5_selected.txt")"
+          git checkout -- langchain_model_profiles/cli.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reval-5x-langchain
+          path: out/
+
+  k8s:
+    name: Revalidate 5 scenarios (kubernetes/kubernetes)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Shallow fetch kubernetes/kubernetes at map commit and run 5 scenarios
+        run: |
+          mkdir -p /tmp/k8s out
+          git -C /tmp/k8s init -q
+          git -C /tmp/k8s remote add origin https://github.com/kubernetes/kubernetes.git
+          git -C /tmp/k8s fetch -q --depth 1 origin c10f2d14e6dd9efd5fa2c2ade3f9f6cef7ffd2ca
+          git -C /tmp/k8s checkout -q FETCH_HEAD
+          cd /tmp/k8s
+
+          t0=$(python3 -c 'import time; print(time.time())')
+          go test -count=1 ./pkg/util/env > "$GITHUB_WORKSPACE/out/k8s_s1.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "K8S_S1_S4 sec=$(python3 -c "print(round($t1-$t0, 2))") $(cat "$GITHUB_WORKSPACE/out/k8s_s1.txt")"
+
+          python3 -c '
+          p = "pkg/util/env/env.go"
+          txt = open(p).read()
+          assert "\treturn defaultValue\n" in txt
+          open(p, "w").write(txt.replace("\treturn defaultValue\n", "\treturn \"\"\n", 1))
+          '
+          t0=$(python3 -c 'import time; print(time.time())')
+          set +e
+          go test -count=1 ./pkg/util/env > "$GITHUB_WORKSPACE/out/k8s_s5_selected.txt" 2>&1
+          rc_sel=$?
+          go test -count=1 ./pkg/kubelet/cm/devicemanager > "$GITHUB_WORKSPACE/out/k8s_s5_other_importer.txt" 2>&1
+          rc_other=$?
+          set -e
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "K8S_S5 rc_sel=$rc_sel rc_other=$rc_other sec=$(python3 -c "print(round($t1-$t0, 2))")"
+          cat "$GITHUB_WORKSPACE/out/k8s_s5_selected.txt"
+          cat "$GITHUB_WORKSPACE/out/k8s_s5_other_importer.txt"
+          git checkout -- pkg/util/env/env.go
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reval-5x-k8s
+          path: out/
+
+  supabase:
+    name: Revalidate 5 scenarios (supabase/supabase)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Sparse checkout supabase/supabase at map commit and run scenarios
+        run: |
+          mkdir -p /tmp/supa out
+          git -C /tmp/supa init -q
+          git -C /tmp/supa remote add origin https://github.com/supabase/supabase.git
+          git -C /tmp/supa sparse-checkout init --cone
+          git -C /tmp/supa sparse-checkout set apps/studio packages
+          git -C /tmp/supa fetch -q --depth 1 origin 7e866ef83e89e35cdda45a6c98abd069d5fa1b2f
+          git -C /tmp/supa checkout -q FETCH_HEAD
+          cd /tmp/supa
+          pnpm install --frozen-lockfile
+          cd apps/studio
+
+          t0=$(python3 -c 'import time; print(time.time())')
+          pnpm exec vitest run compat/next/api.test.ts compat/next/router-navigation.test.tsx compat/next/router.test.ts compat/next/router.tsx.test.tsx > "$GITHUB_WORKSPACE/out/supa_s1.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "SUPA_S1 sec=$(python3 -c "print(round($t1-$t0, 2))")"
+          tail -10 "$GITHUB_WORKSPACE/out/supa_s1.txt"
+
+          t0=$(python3 -c 'import time; print(time.time())')
+          pnpm exec vitest run compat/next/router.test.ts > "$GITHUB_WORKSPACE/out/supa_s4.txt" 2>&1
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "SUPA_S4 sec=$(python3 -c "print(round($t1-$t0, 2))")"
+          tail -10 "$GITHUB_WORKSPACE/out/supa_s4.txt"
+
+          python3 -c '
+          p = "compat/next/router.ts"
+          txt = open(p).read()
+          target = "return withBracketParams.replace(/\\/$/, '\'''\'')"
+          assert target in txt
+          open(p, "w").write(txt.replace(target, "return '\'''\''", 1))
+          '
+          t0=$(python3 -c 'import time; print(time.time())')
+          set +e
+          pnpm exec vitest run compat/next/api.test.ts compat/next/router-navigation.test.tsx compat/next/router.test.ts compat/next/router.tsx.test.tsx > "$GITHUB_WORKSPACE/out/supa_s5_selected.txt" 2>&1
+          rc_sel=$?
+          set -e
+          t1=$(python3 -c 'import time; print(time.time())')
+          echo "SUPA_S5 rc_sel=$rc_sel sec=$(python3 -c "print(round($t1-$t0, 2))")"
+          tail -20 "$GITHUB_WORKSPACE/out/supa_s5_selected.txt"
+          git checkout -- compat/next/router.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reval-5x-supabase
           path: out/
