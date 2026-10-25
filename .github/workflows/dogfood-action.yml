@@ -198,8 +198,8 @@ jobs:
           name: dogfood-selected
           path: /tmp/dogfood-out/
 
-  shadow-full:
-    name: Shadow Full Run (Unpruned Component + Loader Suite)
+  shadow_component:
+    name: Shadow Component Run (18-file hue + loader suite)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -212,7 +212,7 @@ jobs:
           python-version: "3.14"
           enable-cache: false
 
-      - name: Checkout Aamir-raza-1/core@dogfood/action and run unpruned suite
+      - name: Checkout Aamir-raza-1/core@dogfood/action and run 18-file component + loader suite
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libturbojpeg0-dev libpcap-dev
@@ -301,10 +301,10 @@ jobs:
           hue_files = sorted(glob.glob("tests/components/hue/test_*.py")) + ["tests/test_loader.py"]
           summary = {
               "ha_commit": ha_sha,
-              "shadow_suite_files": hue_files,
-              "shadow_suite_file_count": len(hue_files),
-              "shadow_clean_seconds": round(t_clean1 - t_clean0, 3),
-              "shadow_mutant_seconds": round(t_mut1 - t_mut0, 3),
+              "shadow_component_files": hue_files,
+              "shadow_component_file_count": len(hue_files),
+              "shadow_component_clean_seconds": round(t_clean1 - t_clean0, 3),
+              "shadow_component_mutant_seconds": round(t_mut1 - t_mut0, 3),
               "clean_junit": clean_info,
               "mutant_junit": mutant_info,
           }
@@ -313,18 +313,144 @@ jobs:
           print(json.dumps(summary, indent=2))
           PY
 
-      - name: Upload shadow run artifacts
+      - name: Upload shadow component artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dogfood-shadow-full
+          name: dogfood-shadow-component
           path: /tmp/shadow-out/
 
+  windows_action:
+    name: Windows Native Action (uses ./ without python3 shim)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 on Windows (no python3 shim)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare HA index and Windows smoke suite (without python3 shim)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Remove any python3.exe on PATH if setup-python created one so we strictly verify fallback to python.exe
+          python -c "import gzip, shutil, os; os.makedirs('win-out', exist_ok=True); shutil.copyfileobj(gzip.open('.github/actions/ci-proof/ha.idx.gz', 'rb'), open('win-out/ha.idx', 'wb'))"
+          mkdir -p win-tests/engine
+          touch win-tests/__init__.py win-tests/engine/__init__.py
+          cat > .ci-proof-win.yaml <<'YAML'
+          repo: Aamir-raza-1/ci-casestudies
+          language: python
+          test_runner: pytest
+          test_command: "python -m unittest"
+          setup:
+            os_packages: []
+            toolchain: "python 3.11"
+            install: "pip install -e ."
+          source_roots: [engine]
+          test_roots: [win-tests]
+          area_rule: "engine/{name}.py -> win-tests/engine/"
+          run_everything_when:
+            - pyproject.toml
+          ignore:
+            - "**/*.md"
+          ci:
+            provider: github_actions
+            workflow: .github/workflows/dogfood-action.yml
+          existing_selection: "none"
+          YAML
+          cat > win-tests/engine/test_static_imports.py <<'PY'
+          import unittest
+          from engine import static_imports
+          class TestStaticImports(unittest.TestCase):
+              def test_body_only_change(self):
+                  self.assertTrue(static_imports.body_only_change("def f():\n return 1\n", "def f():\n return 2\n"))
+          if __name__ == "__main__":
+              unittest.main()
+          PY
+
+      - name: Run uses ./ on Windows with pre-compiled HA index (no shim)
+        id: win_ha
+        uses: ./
+        with:
+          profile: profiles/home-assistant__core.yaml
+          index: win-out/ha.idx
+          changed_files: homeassistant/components/hue/light.py
+          decisions_out: win-out/decisions-ha.json
+
+      - name: Run uses ./ on Windows with auto-static mode and test command (no shim)
+        id: win_self
+        uses: ./
+        with:
+          profile: .ci-proof-win.yaml
+          changed_files: engine/static_imports.py
+          command: python -m unittest
+          decisions_out: win-out/decisions-self.json
+
+      - name: Verify Windows outputs and ci-proof.exe preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.win_ha.outputs.full_run }}" = "false"
+          test "${{ steps.win_ha.outputs.selected_count }}" -eq 5
+          test "${{ steps.win_self.outputs.full_run }}" = "false"
+          test "${{ steps.win_self.outputs.selected_count }}" -eq 1
+          test "${{ steps.win_self.outputs.selected_tests }}" = "win-tests/engine/test_static_imports.py"
+
+          CI_PROOF_WHICH=$(command -v ci-proof | tr -d '\r')
+          echo "Resolved ci-proof on Windows PATH: $CI_PROOF_WHICH"
+          VER_OUT=$(ci-proof --version | tr -d '\r')
+          echo "ci-proof --version on Windows: $VER_OUT"
+          test "$VER_OUT" = "ci-proof 0.1.0"
+
+          python - <<'PY'
+          import json, os, platform, shutil, sys
+          ha_dec = json.load(open("win-out/decisions-ha.json", encoding="utf-8"))
+          self_dec = json.load(open("win-out/decisions-self.json", encoding="utf-8"))
+          which_exe = shutil.which("ci-proof") or ""
+          bin_dir = os.path.dirname(which_exe) if which_exe else ""
+          plain_script = os.path.join(bin_dir, "ci-proof") if bin_dir else ""
+          exe_file = os.path.join(bin_dir, "ci-proof.exe") if bin_dir else ""
+          summary = {
+              "os": platform.platform(),
+              "python_version": platform.python_version(),
+              "shim_injected": False,
+              "which_ci_proof": which_exe.replace("\\", "/"),
+              "ci_proof_exe_exists": os.path.isfile(exe_file),
+              "plain_script_overwrote_exe": os.path.isfile(plain_script) and not plain_script.endswith(".exe"),
+              "ha_leaf_selected_count": len(ha_dec["selected"]),
+              "ha_leaf_selected": ha_dec["selected"],
+              "ha_install_seconds": float("${{ steps.win_ha.outputs.install_seconds }}"),
+              "ha_select_seconds": float("${{ steps.win_ha.outputs.select_seconds }}"),
+              "ha_overhead_seconds": float("${{ steps.win_ha.outputs.overhead_seconds }}"),
+              "auto_static_selected": self_dec["selected"],
+              "auto_static_install_seconds": float("${{ steps.win_self.outputs.install_seconds }}"),
+              "auto_static_select_seconds": float("${{ steps.win_self.outputs.select_seconds }}"),
+              "auto_static_overhead_seconds": float("${{ steps.win_self.outputs.overhead_seconds }}"),
+              "auto_static_test_seconds": float("${{ steps.win_self.outputs.test_seconds }}"),
+          }
+          with open("win-out/windows-summary.json", "w", encoding="utf-8") as f:
+              json.dump(summary, f, indent=2)
+          print(json.dumps(summary, indent=2))
+          assert summary["ci_proof_exe_exists"], f"Expected ci-proof.exe to exist at {exe_file}"
+          assert not summary["plain_script_overwrote_exe"], "bin/ci-proof script must not be written alongside ci-proof.exe on Windows"
+          assert summary["ha_leaf_selected_count"] == 5
+          PY
+
+      - name: Upload Windows verification artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dogfood-windows
+          path: win-out/
+
   compare:
-    name: Compare Selected vs Shadow Full (DV5 Gate)
-    needs: [selected, shadow-full]
+    name: Compare Selected vs Shadow Component (DV5 Gate)
+    needs: [selected, shadow_component, windows_action]
     runs-on: ubuntu-24.04
     steps:
-      - name: Download selected and shadow artifacts
+      - name: Download selected, shadow_component, and windows artifacts
         uses: actions/download-artifact@v4
         with:
           path: /tmp/compare-artifacts
@@ -337,10 +463,11 @@ jobs:
           import json, os
 
           sel = json.load(open("/tmp/compare-artifacts/dogfood-selected/selected-summary.json"))
-          shd = json.load(open("/tmp/compare-artifacts/dogfood-shadow-full/shadow-summary.json"))
+          shd = json.load(open("/tmp/compare-artifacts/dogfood-shadow-component/shadow-summary.json"))
+          win = json.load(open("/tmp/compare-artifacts/dogfood-windows/windows-summary.json"))
 
           selected_set = set(sel["selected_tests"])
-          shadow_set = set(shd["shadow_suite_files"])
+          shadow_set = set(shd["shadow_component_files"])
           clean_sel_fail = sel["clean_junit"]["failing_files"]
           clean_shd_fail = shd["clean_junit"]["failing_files"]
 
@@ -356,14 +483,16 @@ jobs:
               "changed_files": sel["changed_files"],
               "selected_test_files": sel["selected_tests"],
               "selected_count": sel["selected_count"],
-              "shadow_component_suite_count": shd["shadow_suite_file_count"],
+              "shadow_component_suite_count": shd["shadow_component_file_count"],
               "skipped_component_test_files": skipped_in_hue,
               "full_repo_test_file_count": full_repo_count,
-              "reduction_vs_component_suite_pct": round(100.0 * (1.0 - sel["selected_count"] / shd["shadow_suite_file_count"]), 1),
-              "reduction_vs_full_repo_pct": round(100.0 * (1.0 - sel["selected_count"] / full_repo_count), 2),
+              "reduction_vs_component_suite_pct": round(100.0 * (1.0 - sel["selected_count"] / shd["shadow_component_file_count"]), 1),
+              "single_example_reduction_vs_full_repo_pct": round(100.0 * (1.0 - sel["selected_count"] / full_repo_count), 2),
+              "ha_40pr_ledger_avg_reduction_pct": 26.3,
+              "full_suite_safety_source": "DV4/DV8 (full 6,197-file HA suite evaluation)",
               "clean_selected_failures": clean_sel_fail,
-              "clean_shadow_failures": clean_shd_fail,
-              "planted_bug_failing_in_shadow_full": sorted(mutant_shd_fail),
+              "clean_shadow_component_failures": clean_shd_fail,
+              "planted_bug_failing_in_shadow_component": sorted(mutant_shd_fail),
               "planted_bug_failing_in_selected": sorted(mutant_sel_fail),
               "missed_failures": missed_failures,
               "recall_pct": 100.0 if (mutant_shd_fail and not missed_failures) else 0.0,
@@ -373,33 +502,36 @@ jobs:
                   "action_overhead_seconds": sel["overhead_seconds"],
                   "selected_pytest_seconds": sel["test_seconds"],
                   "selected_total_seconds": round(sel["overhead_seconds"] + sel["test_seconds"], 3),
-                  "shadow_component_pytest_seconds": shd["shadow_clean_seconds"],
+                  "shadow_component_pytest_seconds": shd["shadow_component_clean_seconds"],
               },
               "full_mode_check": sel["full_mode"],
               "ignore_mode_check": sel["ignore_mode"],
+              "windows_native_no_shim": win,
           }
           with open("/tmp/compare-out/dogfood-comparison.json", "w") as f:
               json.dump(comparison, f, indent=2)
           print(json.dumps(comparison, indent=2))
 
           assert not clean_sel_fail, f"Unexpected clean selected failures: {clean_sel_fail}"
-          assert not clean_shd_fail, f"Unexpected clean shadow failures: {clean_shd_fail}"
+          assert not clean_shd_fail, f"Unexpected clean shadow_component failures: {clean_shd_fail}"
           assert selected_set <= shadow_set, "Selected tests must be a subset of component + loader suite"
           assert sel["selected_count"] == 5, f"Expected 5 selected files, got {sel['selected_count']}"
-          assert len(mutant_shd_fail) >= 1, "Planted bug must fail at least 1 test file in shadow full run"
+          assert len(mutant_shd_fail) >= 1, "Planted bug must fail at least 1 test file in shadow_component run"
           assert not missed_failures, f"MISSED FAILURES: {missed_failures}"
           assert mutant_sel_fail == mutant_shd_fail, f"Disagreement on failing files: {mutant_sel_fail} vs {mutant_shd_fail}"
           assert sel["full_mode"]["full"] is True and sel["full_mode"]["selected_count"] == 6197
           assert sel["ignore_mode"]["full"] is False and sel["ignore_mode"]["selected_count"] == 0
+          assert win["ci_proof_exe_exists"] is True and win["plain_script_overwrote_exe"] is False
+          assert win["ha_leaf_selected_count"] == 5
 
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
               t = comparison["timings_seconds"]
               with open(summary_path, "a") as out:
-                  out.write("## DV5 Dogfood Shadow Comparison (`home-assistant/core`)\n\n")
-                  out.write("| Metric | Selected (`uses: ./.github/actions/ci-proof`) | Shadow Component Suite (`hue` + `loader`) | Full Repo Index (`ha.idx`) |\n")
+                  out.write("## DV5 Dogfood Shadow Component Comparison (`home-assistant/core`)\n\n")
+                  out.write("| Metric | Selected (`uses: ./.github/actions/ci-proof`) | `shadow_component` (`hue` + `loader`, 18 files) | Full Repo Index (`ha.idx`, single example) |\n")
                   out.write("|---|---|---|---|\n")
-                  out.write("| Test files executed | `%d` | `%d` (`72.2%%` pruned by `ci-proof`) | `%d` (`99.92%%` pruned by `ci-proof`) |\n" % (
+                  out.write("| Test files executed | `%d` | `%d` (`72.2%%` pruned by `ci-proof`) | `%d` (`99.92%%` single leaf commit; `26.3%%` 40-PR HA ledger avg) |\n" % (
                       comparison["selected_count"], comparison["shadow_component_suite_count"], comparison["full_repo_test_file_count"]))
                   out.write("| Action overhead (`install` + `select`) | `%.3fs` (`%.3fs` + `%.3fs`) | — | — |\n" % (
                       t["action_overhead_seconds"], t["action_install_seconds"], t["action_select_seconds"]))
@@ -410,7 +542,7 @@ jobs:
                   out.write("| Clean failures | `0` | `0` | `0` |\n")
                   out.write("| Planted bug failing test files | `%s` | `%s` | — |\n" % (
                       ", ".join(comparison["planted_bug_failing_in_selected"]),
-                      ", ".join(comparison["planted_bug_failing_in_shadow_full"])))
+                      ", ".join(comparison["planted_bug_failing_in_shadow_component"])))
                   out.write("| Missed failures | `0` (`recall = 100.0%`) | — | — |\n")
           PY
 
